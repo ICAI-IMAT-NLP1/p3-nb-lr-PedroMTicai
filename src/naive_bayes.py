@@ -29,9 +29,9 @@ class NaiveBayes:
             delta (float): Smoothing parameter for Laplace smoothing.
         """
         # TODO: Estimate class priors and conditional probabilities of the bag of words 
-        self.class_priors = None
-        self.vocab_size = None # Shape of the probability tensors, useful for predictions and conditional probabilities
-        self.conditional_probabilities = None
+        self.class_priors = self.estimate_class_priors(labels)
+        self.vocab_size = features.size(1) # Shape of the probability tensors, useful for predictions and conditional probabilities
+        self.conditional_probabilities = self.estimate_conditional_probabilities(features, labels, delta)
         return
 
     def estimate_class_priors(self, labels: torch.Tensor) -> Dict[int, torch.Tensor]:
@@ -45,7 +45,12 @@ class NaiveBayes:
             Dict[int, torch.Tensor]: A dictionary mapping class labels to their estimated prior probabilities.
         """
         # TODO: Count number of samples for each output class and divide by total of samples
-        class_priors: Dict[int, torch.Tensor] = None
+        labels = labels.to(torch.int64)
+
+        labels_size = labels.size(0)
+        class_counts = torch.bincount(labels)
+
+        class_priors: Dict[int, torch.Tensor] = {class_label: class_counts[class_label] / labels_size for class_label in range(len(class_counts))}
         return class_priors
 
     def estimate_conditional_probabilities(
@@ -63,7 +68,19 @@ class NaiveBayes:
             Dict[int, torch.Tensor]: Conditional probabilities of each word for each class.
         """
         # TODO: Estimate conditional probabilities for the words in features and apply smoothing
-        class_word_counts: Dict[int, torch.Tensor] = None
+        class_word_counts: Dict[int, torch.Tensor] = {}
+        num_classes = torch.unique(labels).size(0)
+        vocab_size = features.size(1)
+
+        for c in range(num_classes):
+
+            class_features = features[labels == c]
+            word_counts = class_features.sum(dim=0)  
+            total_words = word_counts.sum() + delta * vocab_size
+
+            smoothed_word_probs = (word_counts + delta) / total_words  
+            
+            class_word_counts[c] = smoothed_word_probs
 
         return class_word_counts
 
@@ -85,8 +102,25 @@ class NaiveBayes:
                 "Model must be trained before estimating class posteriors."
             )
         # TODO: Calculate posterior based on priors and conditional probabilities of the words
-        log_posteriors: torch.Tensor = None
+
+        num_classes: int = len(self.class_priors)
+        log_posteriors: torch.Tensor = torch.zeros(num_classes)
+
+        for c in range(num_classes):
+            # Get the log of the prior probability for class c
+            log_prior = torch.log(self.class_priors[c])
+
+            # Get the conditional probabilities for class c
+            cond_probs = self.conditional_probabilities[c]
+
+            # Compute the log likelihood by summing over log probabilities for the feature
+            log_likelihood = (torch.log(cond_probs) * feature).sum()
+
+            # Compute the log posterior: log(P(class|data)) = log(P(data|class)) + log(P(class))
+            log_posteriors[c] = log_likelihood + log_prior
+
         return log_posteriors
+
 
     def predict(self, feature: torch.Tensor) -> int:
         """
@@ -105,7 +139,8 @@ class NaiveBayes:
             raise Exception("Model not trained. Please call the train method first.")
         
         # TODO: Calculate log posteriors and obtain the class of maximum likelihood 
-        pred: int = None
+
+        pred: int = torch.argmax(self.estimate_class_posteriors(feature)).item()
         return pred
 
     def predict_proba(self, feature: torch.Tensor) -> torch.Tensor:
@@ -125,5 +160,5 @@ class NaiveBayes:
             raise Exception("Model not trained. Please call the train method first.")
 
         # TODO: Calculate log posteriors and transform them to probabilities (softmax)
-        probs: torch.Tensor = None
+        probs: torch.Tensor = torch.softmax(self.estimate_class_posteriors(feature), dim=0)
         return probs
